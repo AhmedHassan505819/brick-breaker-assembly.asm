@@ -28,6 +28,13 @@ TRANSPARENT_BK      EQU 1
 WINDOW_WIDTH        EQU 640
 WINDOW_HEIGHT       EQU 500
 
+; Game area bounds
+BORDER_LEFT         EQU 30
+BORDER_TOP          EQU 50
+BORDER_RIGHT        EQU 610
+BORDER_BOTTOM       EQU 450
+BORDER_THICKNESS    EQU 4
+
 ; ============================================
 ; Structures
 ; ============================================
@@ -106,6 +113,9 @@ DeleteObject PROTO :DWORD
 SetBkMode PROTO :DWORD,:DWORD
 SetTextColor PROTO :DWORD,:DWORD
 TextOutA PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
+Rectangle PROTO :DWORD,:DWORD,:DWORD,:DWORD,:DWORD
+SelectObject PROTO :DWORD,:DWORD
+GetStockObject PROTO :DWORD
 
 ; ============================================
 ; Data
@@ -144,10 +154,34 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         invoke FillRect, hdc, ADDR rc, hBrush
         invoke DeleteObject, hBrush
 
-        ; title text
+        ; draw game border (gray)
+        invoke CreateSolidBrush, 00808080h
+        mov hBrush, eax
+        invoke SelectObject, hdc, hBrush
+        ; top wall
+        mov rc.left, BORDER_LEFT
+        mov rc.top, BORDER_TOP
+        mov rc.right, BORDER_RIGHT
+        mov rc.bottom, BORDER_TOP + BORDER_THICKNESS
+        invoke FillRect, hdc, ADDR rc, hBrush
+        ; left wall
+        mov rc.left, BORDER_LEFT
+        mov rc.top, BORDER_TOP
+        mov rc.right, BORDER_LEFT + BORDER_THICKNESS
+        mov rc.bottom, BORDER_BOTTOM
+        invoke FillRect, hdc, ADDR rc, hBrush
+        ; right wall
+        mov rc.left, BORDER_RIGHT - BORDER_THICKNESS
+        mov rc.top, BORDER_TOP
+        mov rc.right, BORDER_RIGHT
+        mov rc.bottom, BORDER_BOTTOM
+        invoke FillRect, hdc, ADDR rc, hBrush
+        invoke DeleteObject, hBrush
+
+        ; title text above border
         invoke SetBkMode, hdc, TRANSPARENT_BK
         invoke SetTextColor, hdc, 0000FFFFh
-        invoke TextOutA, hdc, 250, 220, ADDR titleText, 13
+        invoke TextOutA, hdc, 270, 15, ADDR titleText, 13
 
         invoke EndPaint, hWin, ADDR ps
         xor eax, eax
