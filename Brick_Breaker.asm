@@ -35,6 +35,16 @@ BORDER_RIGHT        EQU 610
 BORDER_BOTTOM       EQU 450
 BORDER_THICKNESS    EQU 4
 
+; Brick layout constants
+BRICK_ROWS          EQU 3               ; 3 rows of bricks
+BRICK_COLS          EQU 8               ; 8 bricks per row
+TOTAL_BRICKS        EQU 24              ; 3 * 8 = 24 bricks total
+BRICK_WIDTH         EQU 62              ; width of each brick in pixels
+BRICK_HEIGHT        EQU 20              ; height of each brick in pixels
+BRICK_GAP           EQU 6               ; gap between bricks
+BRICK_START_X       EQU 42              ; x position of first brick
+BRICK_START_Y       EQU 70              ; y position of first row
+
 ; ============================================
 ; Structures
 ; ============================================
@@ -121,11 +131,22 @@ GetStockObject PROTO :DWORD
 ; Data
 ; ============================================
 .data
-className       BYTE "BrickBreakerWnd", 0
-windowTitle     BYTE "Brick Breaker", 0
-titleText       BYTE "BRICK BREAKER", 0
-hInstance       DWORD 0
-hwndMain        DWORD 0
+className       BYTE "BrickBreakerWnd", 0  ; window class name for registration
+windowTitle     BYTE "Brick Breaker", 0    ; text shown in title bar
+titleText       BYTE "BRICK BREAKER", 0    ; text drawn on the window
+hInstance       DWORD 0                     ; handle to this program instance
+hwndMain        DWORD 0                     ; handle to our main window
+
+; Brick status array: 1 = alive, 0 = destroyed
+; 24 bricks total (3 rows x 8 columns)
+bricks          BYTE 1,1,1,1,1,1,1,1        ; row 0 (blue bricks)
+                BYTE 1,1,1,1,1,1,1,1        ; row 1 (green bricks)
+                BYTE 1,1,1,1,1,1,1,1        ; row 2 (red bricks)
+
+; Colors for each row (BGR format for Win32)
+rowColors       DWORD 00FF0000h             ; row 0 = blue
+                DWORD 0000CC00h             ; row 1 = green
+                DWORD 000000FFh             ; row 2 = red
 
 ; ============================================
 ; Code
@@ -136,10 +157,14 @@ hwndMain        DWORD 0
 ; Window Procedure
 ; --------------------------------------------
 WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
-    LOCAL ps:PAINTSTRUCT
-    LOCAL hdc:DWORD
-    LOCAL rc:RECT
-    LOCAL hBrush:DWORD
+    LOCAL ps:PAINTSTRUCT                    ; paint struct for BeginPaint
+    LOCAL hdc:DWORD                         ; device context handle
+    LOCAL rc:RECT                           ; temp rectangle for drawing
+    LOCAL hBrush:DWORD                      ; temp brush handle
+    LOCAL brickRow:DWORD                    ; current brick row counter
+    LOCAL brickCol:DWORD                    ; current brick column counter
+    LOCAL brickX:DWORD                      ; current brick x position
+    LOCAL brickY:DWORD                      ; current brick y position
 
     mov eax, uMsg
 
@@ -176,15 +201,80 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         mov rc.right, BORDER_RIGHT
         mov rc.bottom, BORDER_BOTTOM
         invoke FillRect, hdc, ADDR rc, hBrush
-        invoke DeleteObject, hBrush
+        invoke DeleteObject, hBrush         ; free the gray brush
 
-        ; title text above border
-        invoke SetBkMode, hdc, TRANSPARENT_BK
-        invoke SetTextColor, hdc, 0000FFFFh
-        invoke TextOutA, hdc, 270, 15, ADDR titleText, 13
+        ; --- draw bricks ---
+        mov brickRow, 0                      ; start from row 0
+    drawRowLoop:
+        cmp brickRow, BRICK_ROWS             ; check if we drew all rows
+        jge doneDrawBricks                   ; if so, skip to end
 
-        invoke EndPaint, hWin, ADDR ps
-        xor eax, eax
+        ; pick color for this row
+        mov eax, brickRow                    ; get current row index
+        shl eax, 2                           ; multiply by 4 (DWORD size)
+        mov eax, [rowColors + eax]           ; load row color (BGR)
+        invoke CreateSolidBrush, eax         ; create brush with that color
+        mov hBrush, eax                      ; save brush handle
+
+        ; calculate y position for this row
+        mov eax, brickRow                    ; row index
+        mov ecx, BRICK_HEIGHT + BRICK_GAP    ; height + gap per row
+        imul eax, ecx                        ; row * (height + gap)
+        add eax, BRICK_START_Y               ; add starting y offset
+        mov brickY, eax                      ; store y position
+
+        mov brickCol, 0                      ; start from column 0
+    drawColLoop:
+        cmp brickCol, BRICK_COLS             ; check if we drew all columns
+        jge doneRow                          ; if so, move to next row
+
+        ; check if this brick is still alive
+        mov eax, brickRow                    ; current row
+        imul eax, BRICK_COLS                 ; row * 8 = offset into array
+        add eax, brickCol                    ; add column = brick index
+        movzx eax, BYTE PTR [bricks + eax]   ; load alive flag (0 or 1)
+        cmp eax, 0                           ; is brick destroyed?
+        je skipBrick                         ; if dead, skip drawing it
+
+        ; calculate x position for this column
+        mov eax, brickCol                    ; column index
+        mov ecx, BRICK_WIDTH + BRICK_GAP     ; width + gap per column
+        imul eax, ecx                        ; col * (width + gap)
+        add eax, BRICK_START_X               ; add starting x offset
+        mov brickX, eax                      ; store x position
+
+        ; set up the rectangle for this brick
+        mov eax, brickX                      ; left edge
+        mov rc.left, eax
+        mov eax, brickY                      ; top edge
+        mov rc.top, eax
+        mov eax, brickX                      ; right = left + width
+        add eax, BRICK_WIDTH
+        mov rc.right, eax
+        mov eax, brickY                      ; bottom = top + height
+        add eax, BRICK_HEIGHT
+        mov rc.bottom, eax
+
+        invoke FillRect, hdc, ADDR rc, hBrush ; fill the brick rectangle
+
+    skipBrick:
+        inc brickCol                         ; move to next column
+        jmp drawColLoop                      ; repeat for all columns
+
+    doneRow:
+        invoke DeleteObject, hBrush          ; free this row's brush
+        inc brickRow                         ; move to next row
+        jmp drawRowLoop                      ; repeat for all rows
+
+    doneDrawBricks:
+
+        ; --- title text above border ---
+        invoke SetBkMode, hdc, TRANSPARENT_BK ; transparent text background
+        invoke SetTextColor, hdc, 0000FFFFh   ; yellow text color
+        invoke TextOutA, hdc, 270, 15, ADDR titleText, 13 ; draw title
+
+        invoke EndPaint, hWin, ADDR ps       ; finish painting
+        xor eax, eax                         ; return 0 (message handled)
         ret
 
     .ELSEIF eax == WM_DESTROY
