@@ -23,8 +23,17 @@ SW_SHOW             EQU 5
 CW_USEDEFAULT       EQU 80000000h
 WM_CREATE           EQU 0001h
 WM_DESTROY          EQU 0002h
-WM_PAINT            EQU 000Fh
-TRANSPARENT_BK      EQU 1
+WM_PAINT            EQU 000Fh            ; window needs repainting
+WM_KEYDOWN          EQU 0100h            ; a key was pressed
+WM_TIMER            EQU 0113h            ; timer tick message
+TRUE                EQU 1                ; boolean true
+TRANSPARENT_BK      EQU 1                ; transparent background mode
+
+; Virtual key codes for input
+VK_LEFT             EQU 25h              ; left arrow key code
+VK_RIGHT            EQU 27h              ; right arrow key code
+VK_SPACE            EQU 20h              ; space bar key code
+VK_ESCAPE           EQU 1Bh              ; escape key code
 WINDOW_WIDTH        EQU 640
 WINDOW_HEIGHT       EQU 500
 
@@ -44,6 +53,16 @@ BRICK_HEIGHT        EQU 20              ; height of each brick in pixels
 BRICK_GAP           EQU 6               ; gap between bricks
 BRICK_START_X       EQU 42              ; x position of first brick
 BRICK_START_Y       EQU 70              ; y position of first row
+
+; Paddle constants
+PADDLE_WIDTH        EQU 80              ; paddle width in pixels
+PADDLE_HEIGHT       EQU 12              ; paddle height in pixels
+PADDLE_Y            EQU 425             ; paddle vertical position
+PADDLE_SPEED        EQU 15              ; pixels moved per keypress
+
+; Timer
+TIMER_ID            EQU 1               ; id for our game timer
+TIMER_INTERVAL      EQU 16              ; ~60fps refresh rate (ms)
 
 ; ============================================
 ; Structures
@@ -115,7 +134,10 @@ EndPaint PROTO :DWORD,:DWORD
 LoadIconA PROTO :DWORD,:DWORD
 LoadCursorA PROTO :DWORD,:DWORD
 GetClientRect PROTO :DWORD,:DWORD
-FillRect PROTO :DWORD,:DWORD,:DWORD
+FillRect PROTO :DWORD,:DWORD,:DWORD      ; fill rectangle with brush
+SetTimer PROTO :DWORD,:DWORD,:DWORD,:DWORD ; start a timer
+KillTimer PROTO :DWORD,:DWORD             ; stop a timer
+InvalidateRect PROTO :DWORD,:DWORD,:DWORD ; mark window for repaint
 
 ; gdi32
 CreateSolidBrush PROTO :DWORD
@@ -147,6 +169,9 @@ bricks          BYTE 1,1,1,1,1,1,1,1        ; row 0 (blue bricks)
 rowColors       DWORD 00FF0000h             ; row 0 = blue
                 DWORD 0000CC00h             ; row 1 = green
                 DWORD 000000FFh             ; row 2 = red
+
+; Paddle state
+paddleX         DWORD 280                   ; paddle x position (starts centered)
 
 ; ============================================
 ; Code
@@ -268,6 +293,20 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
 
     doneDrawBricks:
 
+        ; --- draw paddle ---
+        invoke CreateSolidBrush, 00FFFF00h   ; cyan color for paddle (BGR)
+        mov hBrush, eax                      ; save the brush handle
+        mov eax, paddleX                     ; get paddle x position
+        mov rc.left, eax                     ; set left edge of paddle
+        mov rc.top, PADDLE_Y                 ; set top edge of paddle
+        add eax, PADDLE_WIDTH                ; calculate right edge
+        mov rc.right, eax                    ; set right edge
+        mov eax, PADDLE_Y                    ; get paddle y again
+        add eax, PADDLE_HEIGHT               ; calculate bottom edge
+        mov rc.bottom, eax                   ; set bottom edge
+        invoke FillRect, hdc, ADDR rc, hBrush ; draw the paddle
+        invoke DeleteObject, hBrush          ; free the brush
+
         ; --- title text above border ---
         invoke SetBkMode, hdc, TRANSPARENT_BK ; transparent text background
         invoke SetTextColor, hdc, 0000FFFFh   ; yellow text color
@@ -277,9 +316,45 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         xor eax, eax                         ; return 0 (message handled)
         ret
 
+    .ELSEIF eax == WM_CREATE
+        ; start the game timer when window is created
+        invoke SetTimer, hWin, TIMER_ID, TIMER_INTERVAL, NULL ; create timer
+        xor eax, eax                         ; return 0
+        ret
+
+    .ELSEIF eax == WM_TIMER
+        ; timer fires ~60 times per second, repaint the window
+        invoke InvalidateRect, hWin, NULL, TRUE ; mark window for repaint
+        xor eax, eax                         ; return 0
+        ret
+
+    .ELSEIF eax == WM_KEYDOWN
+        mov eax, wParam                      ; get which key was pressed
+
+        .IF eax == VK_LEFT                   ; left arrow key
+            mov eax, paddleX                 ; get current paddle position
+            sub eax, PADDLE_SPEED            ; move left by speed amount
+            cmp eax, BORDER_LEFT + BORDER_THICKNESS ; check left boundary
+            jl doneKey                       ; if past boundary, dont move
+            mov paddleX, eax                 ; update paddle position
+        .ELSEIF eax == VK_RIGHT              ; right arrow key
+            mov eax, paddleX                 ; get current paddle position
+            add eax, PADDLE_SPEED            ; move right by speed amount
+            add eax, PADDLE_WIDTH            ; check right edge of paddle
+            cmp eax, BORDER_RIGHT - BORDER_THICKNESS ; check right boundary
+            jg doneKey                       ; if past boundary, dont move
+            sub eax, PADDLE_WIDTH            ; restore to left edge
+            mov paddleX, eax                 ; update paddle position
+        .ENDIF
+
+    doneKey:
+        xor eax, eax                         ; return 0
+        ret
+
     .ELSEIF eax == WM_DESTROY
-        invoke PostQuitMessage, 0
-        xor eax, eax
+        invoke KillTimer, hWin, TIMER_ID     ; stop the timer
+        invoke PostQuitMessage, 0            ; tell windows to quit
+        xor eax, eax                         ; return 0
         ret
     .ENDIF
 
