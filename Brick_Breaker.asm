@@ -60,6 +60,10 @@ PADDLE_HEIGHT       EQU 12              ; paddle height in pixels
 PADDLE_Y            EQU 425             ; paddle vertical position
 PADDLE_SPEED        EQU 15              ; pixels moved per keypress
 
+; Ball constants
+BALL_SIZE           EQU 8               ; ball width and height in pixels
+BALL_SPEED          EQU 3               ; ball speed in pixels per tick
+
 ; Timer
 TIMER_ID            EQU 1               ; id for our game timer
 TIMER_INTERVAL      EQU 16              ; ~60fps refresh rate (ms)
@@ -172,6 +176,13 @@ rowColors       DWORD 00FF0000h             ; row 0 = blue
 
 ; Paddle state
 paddleX         DWORD 280                   ; paddle x position (starts centered)
+
+; Ball state
+ballX           DWORD 316                   ; ball x position (centered on paddle)
+ballY           DWORD 413                   ; ball y position (on top of paddle)
+ballDX          SDWORD 3                    ; ball x velocity (positive = right)
+ballDY          SDWORD -3                   ; ball y velocity (negative = up)
+ballActive      DWORD 0                     ; 0 = sitting on paddle, 1 = moving
 
 ; ============================================
 ; Code
@@ -307,6 +318,22 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         invoke FillRect, hdc, ADDR rc, hBrush ; draw the paddle
         invoke DeleteObject, hBrush          ; free the brush
 
+        ; --- draw ball ---
+        invoke CreateSolidBrush, 00FFFFFFh   ; white color for ball (BGR)
+        mov hBrush, eax                      ; save brush handle
+        mov eax, ballX                       ; get ball x position
+        mov rc.left, eax                     ; set left edge
+        mov eax, ballY                       ; get ball y position
+        mov rc.top, eax                      ; set top edge
+        mov eax, ballX                       ; calculate right edge
+        add eax, BALL_SIZE                   ; left + ball size
+        mov rc.right, eax                    ; set right edge
+        mov eax, ballY                       ; calculate bottom edge
+        add eax, BALL_SIZE                   ; top + ball size
+        mov rc.bottom, eax                   ; set bottom edge
+        invoke FillRect, hdc, ADDR rc, hBrush ; draw ball
+        invoke DeleteObject, hBrush          ; free brush
+
         ; --- title text above border ---
         invoke SetBkMode, hdc, TRANSPARENT_BK ; transparent text background
         invoke SetTextColor, hdc, 0000FFFFh   ; yellow text color
@@ -323,7 +350,95 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         ret
 
     .ELSEIF eax == WM_TIMER
-        ; timer fires ~60 times per second, repaint the window
+        ; --- move the ball if its active ---
+        cmp ballActive, 0                    ; is ball launched?
+        je skipBallMove                      ; if not, skip movement
+
+        ; update ball x position
+        mov eax, ballX                       ; get current x
+        add eax, ballDX                      ; add x velocity
+        mov ballX, eax                       ; save new x
+
+        ; update ball y position
+        mov eax, ballY                       ; get current y
+        add eax, ballDY                      ; add y velocity
+        mov ballY, eax                       ; save new y
+
+        ; bounce off left wall
+        mov eax, ballX                       ; check x position
+        cmp eax, BORDER_LEFT + BORDER_THICKNESS ; past left wall?
+        jg noLeftBounce                      ; if not, skip
+        neg ballDX                           ; reverse x direction
+        mov ballX, BORDER_LEFT + BORDER_THICKNESS ; push back inside
+    noLeftBounce:
+
+        ; bounce off right wall
+        mov eax, ballX                       ; check x position
+        add eax, BALL_SIZE                   ; add ball width
+        cmp eax, BORDER_RIGHT - BORDER_THICKNESS ; past right wall?
+        jl noRightBounce                     ; if not, skip
+        neg ballDX                           ; reverse x direction
+        mov eax, BORDER_RIGHT - BORDER_THICKNESS ; push back inside
+        sub eax, BALL_SIZE
+        mov ballX, eax
+    noRightBounce:
+
+        ; bounce off top wall
+        mov eax, ballY                       ; check y position
+        cmp eax, BORDER_TOP + BORDER_THICKNESS ; past top wall?
+        jg noTopBounce                       ; if not, skip
+        neg ballDY                           ; reverse y direction
+        mov ballY, BORDER_TOP + BORDER_THICKNESS ; push back inside
+    noTopBounce:
+
+        ; check paddle collision
+        mov eax, ballY                       ; ball y position
+        add eax, BALL_SIZE                   ; bottom edge of ball
+        cmp eax, PADDLE_Y                    ; reached paddle level?
+        jl noPaddleBounce                    ; if above paddle, skip
+        cmp eax, PADDLE_Y + PADDLE_HEIGHT    ; below paddle bottom?
+        jg ballFell                          ; ball fell past paddle
+        mov eax, ballX                       ; ball x position
+        add eax, BALL_SIZE                   ; right edge of ball
+        cmp eax, paddleX                     ; left of paddle?
+        jl ballFell                          ; missed paddle
+        mov eax, ballX                       ; ball x position
+        mov ecx, paddleX                     ; paddle left edge
+        add ecx, PADDLE_WIDTH                ; paddle right edge
+        cmp eax, ecx                         ; right of paddle?
+        jg ballFell                          ; missed paddle
+        neg ballDY                           ; bounce upward
+        mov eax, PADDLE_Y                    ; reposition ball
+        sub eax, BALL_SIZE                   ; above paddle
+        mov ballY, eax                       ; update position
+        jmp noPaddleBounce                   ; done with bounce
+
+    ballFell:
+        ; ball went below paddle, reset to paddle
+        mov ballActive, 0                    ; deactivate ball
+        mov eax, paddleX                     ; center ball on paddle
+        add eax, PADDLE_WIDTH / 2            ; middle of paddle
+        sub eax, BALL_SIZE / 2               ; center the ball
+        mov ballX, eax                       ; set ball x
+        mov eax, PADDLE_Y                    ; above paddle
+        sub eax, BALL_SIZE                   ; position on top
+        mov ballY, eax                       ; set ball y
+
+    noPaddleBounce:
+    skipBallMove:
+
+        ; if ball is on paddle, track paddle position
+        cmp ballActive, 0                    ; ball sitting on paddle?
+        jne skipTrack                        ; if moving, skip
+        mov eax, paddleX                     ; get paddle x
+        add eax, PADDLE_WIDTH / 2            ; center of paddle
+        sub eax, BALL_SIZE / 2               ; center ball on it
+        mov ballX, eax                       ; update ball x
+        mov eax, PADDLE_Y                    ; just above paddle
+        sub eax, BALL_SIZE                   ; on top of paddle
+        mov ballY, eax                       ; update ball y
+    skipTrack:
+
         invoke InvalidateRect, hWin, NULL, TRUE ; mark window for repaint
         xor eax, eax                         ; return 0
         ret
@@ -345,6 +460,14 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
             jg doneKey                       ; if past boundary, dont move
             sub eax, PADDLE_WIDTH            ; restore to left edge
             mov paddleX, eax                 ; update paddle position
+        .ELSEIF eax == VK_SPACE              ; space bar
+            cmp ballActive, 0                ; is ball on paddle?
+            jne doneKey                      ; if already moving, skip
+            mov ballActive, 1                ; launch the ball
+            mov ballDX, BALL_SPEED           ; set x velocity right
+            mov eax, BALL_SPEED              ; get speed value
+            neg eax                          ; make it negative (upward)
+            mov ballDY, eax                  ; set y velocity up
         .ENDIF
 
     doneKey:
