@@ -184,6 +184,11 @@ ballDX          SDWORD 3                    ; ball x velocity (positive = right)
 ballDY          SDWORD -3                   ; ball y velocity (negative = up)
 ballActive      DWORD 0                     ; 0 = sitting on paddle, 1 = moving
 
+; Game state
+score           DWORD 0                     ; player score
+lives           DWORD 3                     ; remaining lives
+bricksLeft      DWORD 24                    ; how many bricks still alive
+
 ; ============================================
 ; Code
 ; ============================================
@@ -390,6 +395,81 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         neg ballDY                           ; reverse y direction
         mov ballY, BORDER_TOP + BORDER_THICKNESS ; push back inside
     noTopBounce:
+
+        ; --- check brick collision ---
+        ; loop through all bricks and see if ball overlaps any
+        xor ecx, ecx                         ; ecx = brick index (0 to 23)
+    checkBrickLoop:
+        cmp ecx, TOTAL_BRICKS                ; checked all bricks?
+        jge doneBrickCheck                   ; if so, done
+
+        movzx eax, BYTE PTR [bricks + ecx]   ; is this brick alive?
+        cmp eax, 0                           ; 0 = destroyed
+        je nextBrickCheck                    ; skip dead bricks
+
+        ; calculate this brick's position
+        push ecx                             ; save brick index
+        mov eax, ecx                         ; copy index
+        xor edx, edx                         ; clear for division
+        mov ebx, BRICK_COLS                  ; divisor = 8
+        div ebx                              ; eax = row, edx = column
+
+        ; brick Y = BRICK_START_Y + row * (BRICK_HEIGHT + BRICK_GAP)
+        push edx                             ; save column
+        mov ebx, BRICK_HEIGHT + BRICK_GAP    ; row stride
+        imul eax, ebx                        ; row * stride
+        add eax, BRICK_START_Y               ; add start offset
+        mov esi, eax                         ; esi = brick top Y
+
+        ; brick X = BRICK_START_X + col * (BRICK_WIDTH + BRICK_GAP)
+        pop edx                              ; restore column
+        mov eax, edx                         ; column index
+        mov ebx, BRICK_WIDTH + BRICK_GAP     ; column stride
+        imul eax, ebx                        ; col * stride
+        add eax, BRICK_START_X               ; add start offset
+        mov edi, eax                         ; edi = brick left X
+
+        ; check overlap: ball rect vs brick rect
+        ; ball right > brick left?
+        mov eax, ballX                       ; ball left
+        add eax, BALL_SIZE                   ; ball right edge
+        cmp eax, edi                         ; compare with brick left
+        jle noBrickHit                       ; no overlap
+
+        ; ball left < brick right?
+        mov eax, ballX                       ; ball left
+        mov ebx, edi                         ; brick left
+        add ebx, BRICK_WIDTH                 ; brick right edge
+        cmp eax, ebx                         ; compare
+        jge noBrickHit                       ; no overlap
+
+        ; ball bottom > brick top?
+        mov eax, ballY                       ; ball top
+        add eax, BALL_SIZE                   ; ball bottom edge
+        cmp eax, esi                         ; compare with brick top
+        jle noBrickHit                       ; no overlap
+
+        ; ball top < brick bottom?
+        mov eax, ballY                       ; ball top
+        mov ebx, esi                         ; brick top
+        add ebx, BRICK_HEIGHT                ; brick bottom edge
+        cmp eax, ebx                         ; compare
+        jge noBrickHit                       ; no overlap
+
+        ; --- hit! destroy this brick ---
+        pop ecx                              ; restore brick index
+        mov BYTE PTR [bricks + ecx], 0       ; mark brick as dead
+        neg ballDY                           ; bounce the ball vertically
+        add score, 10                        ; add 10 points
+        dec bricksLeft                       ; one less brick
+        jmp doneBrickCheck                   ; only destroy one brick per tick
+
+    noBrickHit:
+        pop ecx                              ; restore brick index
+    nextBrickCheck:
+        inc ecx                              ; next brick
+        jmp checkBrickLoop                   ; keep checking
+    doneBrickCheck:
 
         ; check paddle collision
         mov eax, ballY                       ; ball y position
