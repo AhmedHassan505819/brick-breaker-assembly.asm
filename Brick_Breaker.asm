@@ -142,6 +142,8 @@ FillRect PROTO :DWORD,:DWORD,:DWORD      ; fill rectangle with brush
 SetTimer PROTO :DWORD,:DWORD,:DWORD,:DWORD ; start a timer
 KillTimer PROTO :DWORD,:DWORD             ; stop a timer
 InvalidateRect PROTO :DWORD,:DWORD,:DWORD ; mark window for repaint
+MessageBoxA PROTO :DWORD,:DWORD,:DWORD,:DWORD ; show message box
+wsprintfA PROTO C :DWORD,:DWORD,:VARARG   ; format string with numbers
 
 ; gdi32
 CreateSolidBrush PROTO :DWORD
@@ -188,6 +190,17 @@ ballActive      DWORD 0                     ; 0 = sitting on paddle, 1 = moving
 score           DWORD 0                     ; player score
 lives           DWORD 3                     ; remaining lives
 bricksLeft      DWORD 24                    ; how many bricks still alive
+gameState       DWORD 0                     ; 0=playing, 1=won, 2=lost
+
+; HUD display strings
+scoreLabel      BYTE "Score: ", 0           ; label for score display
+livesLabel      BYTE "Lives: ", 0           ; label for lives display
+scoreBuf        BYTE 32 DUP(0)              ; buffer for formatted score text
+livesBuf        BYTE 32 DUP(0)              ; buffer for formatted lives text
+fmtStr          BYTE "%d", 0                ; format string for numbers
+winMsg          BYTE "YOU WIN!", 0          ; win message text
+loseMsg         BYTE "GAME OVER", 0         ; lose message text
+restartMsg      BYTE "Press SPACE to restart", 0 ; restart hint
 
 ; ============================================
 ; Code
@@ -339,10 +352,36 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         invoke FillRect, hdc, ADDR rc, hBrush ; draw ball
         invoke DeleteObject, hBrush          ; free brush
 
-        ; --- title text above border ---
+        ; --- HUD: score and lives ---
         invoke SetBkMode, hdc, TRANSPARENT_BK ; transparent text background
         invoke SetTextColor, hdc, 0000FFFFh   ; yellow text color
         invoke TextOutA, hdc, 270, 15, ADDR titleText, 13 ; draw title
+
+        ; draw score label and value
+        invoke SetTextColor, hdc, 00FFFFFFh   ; white color for HUD
+        invoke TextOutA, hdc, 40, 15, ADDR scoreLabel, 7 ; "Score: "
+        invoke wsprintfA, ADDR scoreBuf, ADDR fmtStr, score ; convert score to text
+        invoke TextOutA, hdc, 96, 15, ADDR scoreBuf, eax ; draw score number
+
+        ; draw lives label and value
+        invoke TextOutA, hdc, 520, 15, ADDR livesLabel, 7 ; "Lives: "
+        invoke wsprintfA, ADDR livesBuf, ADDR fmtStr, lives ; convert lives to text
+        invoke TextOutA, hdc, 576, 15, ADDR livesBuf, eax ; draw lives number
+
+        ; if game is over, show message
+        cmp gameState, 1                     ; did player win?
+        jne checkLose                        ; if not, check lose
+        invoke SetTextColor, hdc, 0000FF00h   ; green for win
+        invoke TextOutA, hdc, 265, 230, ADDR winMsg, 8 ; show win text
+        invoke TextOutA, hdc, 230, 260, ADDR restartMsg, 22 ; show restart hint
+        jmp doneHUD                          ; skip lose check
+    checkLose:
+        cmp gameState, 2                     ; did player lose?
+        jne doneHUD                          ; if not, skip
+        invoke SetTextColor, hdc, 000000FFh   ; red for lose
+        invoke TextOutA, hdc, 260, 230, ADDR loseMsg, 9 ; show lose text
+        invoke TextOutA, hdc, 230, 260, ADDR restartMsg, 22 ; show restart hint
+    doneHUD:
 
         invoke EndPaint, hWin, ADDR ps       ; finish painting
         xor eax, eax                         ; return 0 (message handled)
@@ -356,6 +395,8 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
 
     .ELSEIF eax == WM_TIMER
         ; --- move the ball if its active ---
+        cmp gameState, 0                     ; is game still in play?
+        jne skipBallMove                     ; if won or lost, dont move ball
         cmp ballActive, 0                    ; is ball launched?
         je skipBallMove                      ; if not, skip movement
 
@@ -462,7 +503,13 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         neg ballDY                           ; bounce the ball vertically
         add score, 10                        ; add 10 points
         dec bricksLeft                       ; one less brick
-        jmp doneBrickCheck                   ; only destroy one brick per tick
+
+        ; check if all bricks are destroyed (win condition)
+        cmp bricksLeft, 0                    ; any bricks remaining?
+        jg doneBrickCheck                    ; if yes, continue
+        mov gameState, 1                     ; player wins!
+        mov ballActive, 0                    ; stop the ball
+        jmp doneBrickCheck                   ; done checking
 
     noBrickHit:
         pop ecx                              ; restore brick index
@@ -494,7 +541,14 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         jmp noPaddleBounce                   ; done with bounce
 
     ballFell:
-        ; ball went below paddle, reset to paddle
+        ; ball went below paddle, lose a life
+        dec lives                            ; subtract one life
+        cmp lives, 0                         ; any lives left?
+        jg stillAlive                        ; if yes, continue
+        mov gameState, 2                     ; game over - player lost
+        mov ballActive, 0                    ; stop ball
+        jmp noPaddleBounce                   ; skip reset
+    stillAlive:
         mov ballActive, 0                    ; deactivate ball
         mov eax, paddleX                     ; center ball on paddle
         add eax, PADDLE_WIDTH / 2            ; middle of paddle
@@ -541,6 +595,37 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
             sub eax, PADDLE_WIDTH            ; restore to left edge
             mov paddleX, eax                 ; update paddle position
         .ELSEIF eax == VK_SPACE              ; space bar
+            ; check if game is over and needs restart
+            cmp gameState, 0                 ; is game still playing?
+            je launchBall                    ; if yes, try to launch ball
+
+            ; --- restart the game ---
+            mov gameState, 0                 ; reset game state to playing
+            mov score, 0                     ; reset score to zero
+            mov lives, 3                     ; reset lives to 3
+            mov bricksLeft, TOTAL_BRICKS     ; reset brick count
+            mov paddleX, 280                 ; reset paddle position
+
+            ; reset all bricks to alive
+            mov ecx, 0                       ; brick index counter
+        resetBricks:
+            mov BYTE PTR [bricks + ecx], 1   ; mark brick as alive
+            inc ecx                          ; next brick
+            cmp ecx, TOTAL_BRICKS            ; all bricks reset?
+            jl resetBricks                   ; keep going if not
+
+            ; reset ball onto paddle
+            mov ballActive, 0                ; ball on paddle
+            mov eax, paddleX                 ; center on paddle
+            add eax, PADDLE_WIDTH / 2        ; middle of paddle
+            sub eax, BALL_SIZE / 2           ; center ball
+            mov ballX, eax                   ; set ball x
+            mov eax, PADDLE_Y                ; above paddle
+            sub eax, BALL_SIZE               ; on top
+            mov ballY, eax                   ; set ball y
+            jmp doneKey                      ; done
+
+        launchBall:
             cmp ballActive, 0                ; is ball on paddle?
             jne doneKey                      ; if already moving, skip
             mov ballActive, 1                ; launch the ball
