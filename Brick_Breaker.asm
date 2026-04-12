@@ -192,11 +192,17 @@ lives           DWORD 3                     ; remaining lives
 bricksLeft      DWORD 24                    ; how many bricks still alive
 gameState       DWORD 0                     ; 0=playing, 1=won, 2=lost
 
+; Time tracking
+timerTicks      DWORD 0                     ; counts ticks to calculate seconds (60 ticks ~ 1s)
+timeSeconds     DWORD 0                     ; elapsed game time in seconds
+
 ; HUD display strings
 scoreLabel      BYTE "Score: ", 0           ; label for score display
 livesLabel      BYTE "Lives: ", 0           ; label for lives display
+timeLabel       BYTE "Time: ", 0            ; label for time display
 scoreBuf        BYTE 32 DUP(0)              ; buffer for formatted score text
 livesBuf        BYTE 32 DUP(0)              ; buffer for formatted lives text
+timeBuf         BYTE 32 DUP(0)              ; buffer for formatted time text
 fmtStr          BYTE "%d", 0                ; format string for numbers
 winMsg          BYTE "YOU WIN!", 0          ; win message text
 loseMsg         BYTE "GAME OVER", 0         ; lose message text
@@ -353,21 +359,26 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         invoke FillRect, hdc, ADDR rc, hBrush ; draw ball
         invoke DeleteObject, hBrush          ; free brush
 
-        ; --- HUD: score and lives ---
+        ; --- HUD: score, time and lives ---
         invoke SetBkMode, hdc, TRANSPARENT_BK ; transparent text background
         invoke SetTextColor, hdc, 0000FFFFh   ; yellow text color
-        invoke TextOutA, hdc, 270, 15, ADDR titleText, 13 ; draw title
+        invoke TextOutA, hdc, 250, 15, ADDR titleText, 13 ; draw title
 
         ; draw score label and value
         invoke SetTextColor, hdc, 00FFFFFFh   ; white color for HUD
-        invoke TextOutA, hdc, 40, 15, ADDR scoreLabel, 7 ; "Score: "
+        invoke TextOutA, hdc, 30, 15, ADDR scoreLabel, 7 ; "Score: "
         invoke wsprintfA, ADDR scoreBuf, ADDR fmtStr, score ; convert score to text
-        invoke TextOutA, hdc, 96, 15, ADDR scoreBuf, eax ; draw score number
+        invoke TextOutA, hdc, 86, 15, ADDR scoreBuf, eax ; draw score number
+
+        ; draw time label and value
+        invoke TextOutA, hdc, 430, 15, ADDR timeLabel, 6 ; "Time: "
+        invoke wsprintfA, ADDR timeBuf, ADDR fmtStr, timeSeconds ; convert time to text
+        invoke TextOutA, hdc, 480, 15, ADDR timeBuf, eax ; draw time number
 
         ; draw lives label and value
-        invoke TextOutA, hdc, 520, 15, ADDR livesLabel, 7 ; "Lives: "
+        invoke TextOutA, hdc, 540, 15, ADDR livesLabel, 7 ; "Lives: "
         invoke wsprintfA, ADDR livesBuf, ADDR fmtStr, lives ; convert lives to text
-        invoke TextOutA, hdc, 576, 15, ADDR livesBuf, eax ; draw lives number
+        invoke TextOutA, hdc, 596, 15, ADDR livesBuf, eax ; draw lives number
 
         ; if game is over, show message
         cmp gameState, 1                     ; did player win?
@@ -404,6 +415,18 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         ret
 
     .ELSEIF eax == WM_TIMER
+        ; --- update time ---
+        cmp gameState, 0                     ; is game still in play?
+        jne skipTimeUpdate                   ; if won or lost, dont update time
+        cmp ballActive, 1                    ; is ball active (game running)?
+        jne skipTimeUpdate                   ; if not, dont update time
+        inc timerTicks                       ; increment tick counter
+        cmp timerTicks, 60                   ; reached 60 ticks? (approx 1 sec)
+        jl skipTimeUpdate                    ; if not, skip
+        mov timerTicks, 0                    ; reset tick counter
+        inc timeSeconds                      ; increment seconds
+    skipTimeUpdate:
+
         ; --- move the ball if its active ---
         cmp gameState, 0                     ; is game still in play?
         jne skipBallMove                     ; if won or lost, dont move ball
@@ -613,6 +636,8 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
             mov gameState, 0                 ; reset game state to playing
             mov score, 0                     ; reset score to zero
             mov lives, 3                     ; reset lives to 3
+            mov timeSeconds, 0               ; reset time
+            mov timerTicks, 0                ; reset ticks
             mov bricksLeft, TOTAL_BRICKS     ; reset brick count
             mov paddleX, 280                 ; reset paddle position
 
