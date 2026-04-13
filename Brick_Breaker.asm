@@ -540,6 +540,13 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         ; check if all bricks are destroyed (win condition)
         cmp bricksLeft, 0                    ; any bricks remaining?
         jg doneBrickCheck                    ; if yes, continue
+        
+        ; check for time bonus
+        cmp timeSeconds, 120                 ; did they finish in under 2 minutes?
+        jg skipBonus                         ; if took longer, no bonus
+        add score, 50                        ; add 50 bonus points
+    skipBonus:
+        
         mov gameState, 1                     ; player wins!
         mov ballActive, 0                    ; stop the ball
         jmp doneBrickCheck                   ; done checking
