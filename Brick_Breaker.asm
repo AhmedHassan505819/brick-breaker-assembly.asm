@@ -196,6 +196,9 @@ gameState       DWORD 0                     ; 0=playing, 1=won, 2=lost
 timerTicks      DWORD 0                     ; counts ticks to calculate seconds (60 ticks ~ 1s)
 timeSeconds     DWORD 0                     ; elapsed game time in seconds
 
+; Powerups
+solidBaseTimer  DWORD 0                     ; timer for solid base powerup (in ticks)
+
 ; HUD display strings
 scoreLabel      BYTE "Score: ", 0           ; label for score display
 livesLabel      BYTE "Lives: ", 0           ; label for lives display
@@ -263,6 +266,24 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         mov rc.bottom, BORDER_BOTTOM
         invoke FillRect, hdc, ADDR rc, hBrush
         invoke DeleteObject, hBrush         ; free the gray brush
+
+        ; --- draw bottom border if solid base active ---
+        cmp solidBaseTimer, 0                ; is solid base active?
+        jle skipBottomBorder                 ; if not, skip
+        
+        invoke CreateSolidBrush, 000000FFh   ; red brush for solid base
+        mov hBrush, eax                      ; save brush handle
+        
+        mov rc.left, BORDER_LEFT             ; left edge
+        mov rc.top, BORDER_BOTTOM            ; bottom edge
+        mov rc.right, BORDER_RIGHT           ; right edge
+        mov eax, BORDER_BOTTOM               ; get bottom y
+        add eax, BORDER_THICKNESS            ; add thickness
+        mov rc.bottom, eax                   ; set bottom boundary
+        
+        invoke FillRect, hdc, ADDR rc, hBrush ; draw bottom border
+        invoke DeleteObject, hBrush          ; free brush
+    skipBottomBorder:
 
         ; --- draw bricks ---
         mov brickRow, 0                      ; start from row 0
@@ -427,6 +448,12 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         inc timeSeconds                      ; increment seconds
     skipTimeUpdate:
 
+        ; --- update powerup timers ---
+        cmp solidBaseTimer, 0                ; is solid base active?
+        jle skipSolidUpdate                  ; if not, skip
+        dec solidBaseTimer                   ; decrement timer
+    skipSolidUpdate:
+
         ; --- move the ball if its active ---
         cmp gameState, 0                     ; is game still in play?
         jne skipBallMove                     ; if won or lost, dont move ball
@@ -469,6 +496,19 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         neg ballDY                           ; reverse y direction
         mov ballY, BORDER_TOP + BORDER_THICKNESS ; push back inside
     noTopBounce:
+
+        ; bounce off bottom wall (ONLY if solid base active)
+        cmp solidBaseTimer, 0                ; is solid base active?
+        jle noBottomBounce                   ; if not, skip
+        mov eax, ballY                       ; check y position
+        add eax, BALL_SIZE                   ; add ball size
+        cmp eax, BORDER_BOTTOM               ; past bottom wall?
+        jl noBottomBounce                    ; if not, skip
+        neg ballDY                           ; reverse y direction
+        mov eax, BORDER_BOTTOM               ; push back inside
+        sub eax, BALL_SIZE
+        mov ballY, eax
+    noBottomBounce:
 
         ; --- check brick collision ---
         ; loop through all bricks and see if ball overlaps any
@@ -537,6 +577,16 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         add score, 10                        ; add 10 points
         dec bricksLeft                       ; one less brick
 
+        ; check if red brick (row 2)
+        mov eax, ecx                         ; copy index
+        xor edx, edx                         ; clear
+        mov ebx, BRICK_COLS                  ; cols per row
+        div ebx                              ; eax = row
+        cmp eax, 2                           ; is it row 2 (red)?
+        jne noPowerup                        ; if not, skip
+        mov solidBaseTimer, 300              ; 300 ticks = 5 seconds
+    noPowerup:
+
         ; check if all bricks are destroyed (win condition)
         cmp bricksLeft, 0                    ; any bricks remaining?
         jg doneBrickCheck                    ; if yes, continue
@@ -581,6 +631,10 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         jmp noPaddleBounce                   ; done with bounce
 
     ballFell:
+        ; if solid base is active, do not die, let ball hit bottom
+        cmp solidBaseTimer, 0                ; is solid base active?
+        jg noPaddleBounce                    ; just keep moving
+        
         ; ball went below paddle, lose a life
         dec lives                            ; subtract one life
         cmp lives, 0                         ; any lives left?
@@ -645,6 +699,7 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
             mov lives, 3                     ; reset lives to 3
             mov timeSeconds, 0               ; reset time
             mov timerTicks, 0                ; reset ticks
+            mov solidBaseTimer, 0            ; reset solid base
             mov bricksLeft, TOTAL_BRICKS     ; reset brick count
             mov paddleX, 280                 ; reset paddle position
 
