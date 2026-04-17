@@ -34,6 +34,10 @@ VK_LEFT             EQU 25h              ; left arrow key code
 VK_RIGHT            EQU 27h              ; right arrow key code
 VK_SPACE            EQU 20h              ; space bar key code
 VK_ESCAPE           EQU 1Bh              ; escape key code
+VK_RETURN           EQU 0Dh              ; enter key code
+VK_I                EQU 49h              ; 'I' key
+VK_Q                EQU 51h              ; 'Q' key
+VK_R                EQU 52h              ; 'R' key
 WINDOW_WIDTH        EQU 640                  ; game window width in pixels
 WINDOW_HEIGHT       EQU 500                  ; game window height in pixels
 
@@ -66,7 +70,7 @@ BALL_SPEED          EQU 3               ; ball speed in pixels per tick
 
 ; Timer
 TIMER_ID            EQU 1               ; id for our game timer
-TIMER_INTERVAL      EQU 16              ; ~60fps refresh rate (ms)
+TIMER_INTERVAL      EQU 8               ; ~125fps refresh rate (ms)
 
 ; ============================================
 ; Structures
@@ -122,6 +126,7 @@ PAINTSTRUCT ENDS
 ; kernel32
 GetModuleHandleA PROTO :DWORD
 ExitProcess PROTO :DWORD
+Beep PROTO :DWORD,:DWORD
 
 ; user32
 RegisterClassExA PROTO :DWORD
@@ -144,6 +149,7 @@ KillTimer PROTO :DWORD,:DWORD             ; stop a timer
 InvalidateRect PROTO :DWORD,:DWORD,:DWORD ; mark window for repaint
 MessageBoxA PROTO :DWORD,:DWORD,:DWORD,:DWORD ; show message box
 wsprintfA PROTO C :DWORD,:DWORD,:VARARG   ; format string with numbers
+GetAsyncKeyState PROTO :DWORD              ; check key state asynchronously
 
 ; gdi32
 CreateSolidBrush PROTO :DWORD
@@ -190,7 +196,7 @@ ballActive      DWORD 0                     ; 0 = sitting on paddle, 1 = moving
 score           DWORD 0                     ; player score
 lives           DWORD 3                     ; remaining lives
 bricksLeft      DWORD 24                    ; how many bricks still alive
-gameState       DWORD 0                     ; 0=playing, 1=won, 2=lost
+gameState       DWORD 3                     ; 0=playing, 1=won, 2=lost, 3=title, 4=instr
 
 ; Time tracking
 timerTicks      DWORD 0                     ; counts ticks to calculate seconds (60 ticks ~ 1s)
@@ -214,6 +220,17 @@ startMsg        BYTE "Press SPACE to launch ball", 0 ; start hint
 hint1Msg        BYTE "Left/Right Arrows to move", 0  ; control hint
 hint2Msg        BYTE "Red bricks give 5s solid base!", 0 ; powerup hint
 hint3Msg        BYTE "Clear under 2m for +50pt bonus", 0 ; bonus hint
+
+; Menu Strings
+titleWelcomeMsg BYTE "WELCOME TO BRICK BREAKER", 0
+titlePlayMsg    BYTE "PRESS ENTER TO PLAY GAME", 0
+titleInstrMsg   BYTE "PRESS I FOR INSTRUCTION BOX", 0
+titleExitMsg    BYTE "PRESS ESC TO QUIT GAME", 0
+instrTitleMsg   BYTE "INSTRUCTIONS", 0
+endScoresMsg    BYTE "YOUR TOTAL SCORE: ", 0
+endLivesMsg     BYTE "LIVES REMAINING: ", 0
+endRestartMsg   BYTE "PRESS R TO RESTART YOUR GAME", 0
+endQuitMsg      BYTE "PRESS Q TO QUIT GAME", 0
 
 ; ============================================
 ; Code
@@ -239,7 +256,21 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         invoke BeginPaint, hWin, ADDR ps
         mov hdc, eax
 
-        ; dark background
+        ; --- branch based on game state ---
+        cmp gameState, 3                     ; title screen?
+        je drawTitleScreen
+        cmp gameState, 4                     ; instruction screen?
+        je drawInstructionScreen
+        cmp gameState, 1                     ; won?
+        je drawEndScreen
+        cmp gameState, 2                     ; lost?
+        je drawEndScreen
+
+        ; ============================================
+        ; draw game (playing state)
+        ; ============================================
+
+        ; --- draw game area border (gray) ---
         invoke GetClientRect, hWin, ADDR rc
         invoke CreateSolidBrush, 00400000h
         mov hBrush, eax
@@ -404,38 +435,61 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         invoke wsprintfA, ADDR livesBuf, ADDR fmtStr, lives ; convert lives to text
         invoke TextOutA, hdc, 596, 15, ADDR livesBuf, eax ; draw lives number
 
-        ; if game is over, show message
-        cmp gameState, 1                     ; did player win?
-        jne checkLose                        ; if not, check lose
-        invoke SetTextColor, hdc, 0000FF00h   ; green for win
-        invoke TextOutA, hdc, 265, 230, ADDR winMsg, 8 ; show win text
-        invoke TextOutA, hdc, 230, 260, ADDR restartMsg, 22 ; show restart hint
-        jmp doneHUD                          ; skip lose check
-    checkLose:
-        cmp gameState, 2                     ; did player lose?
-        jne doneHUD                          ; if not, skip
-        invoke SetTextColor, hdc, 000000FFh   ; red for lose
-        invoke TextOutA, hdc, 260, 230, ADDR loseMsg, 9 ; show lose text
-        invoke TextOutA, hdc, 230, 260, ADDR restartMsg, 22 ; show restart hint
-    doneHUD:
-
         ; show start hints if ball is on paddle and game just started
-        cmp gameState, 0                     ; game still playing?
-        jne skipStartMsg                     ; if not, skip
         cmp ballActive, 0                    ; ball on paddle?
         jne skipStartMsg                     ; if launched, skip
         
         invoke SetTextColor, hdc, 00AAAAAAh  ; light gray text
-        invoke TextOutA, hdc, 225, 400, ADDR startMsg, 26 ; show start hint
-        
-        cmp timeSeconds, 0                   ; is it the very beginning of the game?
-        jg skipStartMsg                      ; if time > 0, don't show the other hints
-        invoke SetTextColor, hdc, 00888888h  ; darker gray
-        invoke TextOutA, hdc, 230, 240, ADDR hint1Msg, 25 ; control hint
-        invoke TextOutA, hdc, 210, 260, ADDR hint2Msg, 30 ; powerup hint
-        invoke TextOutA, hdc, 210, 280, ADDR hint3Msg, 30 ; bonus hint
+        invoke TextOutA, hdc, 225, 300, ADDR startMsg, 26 ; show start hint
     skipStartMsg:
+        jmp donePaint                        ; done drawing game
 
+        ; ============================================
+        ; dedicated menu screens
+        ; ============================================
+    drawTitleScreen:
+        invoke SetBkMode, hdc, TRANSPARENT_BK
+        invoke SetTextColor, hdc, 0000FFFFh  ; yellow title
+        invoke TextOutA, hdc, 220, 150, ADDR titleWelcomeMsg, 24
+        invoke SetTextColor, hdc, 00FFFFFFh  ; white text
+        invoke TextOutA, hdc, 220, 220, ADDR titlePlayMsg, 24
+        invoke TextOutA, hdc, 220, 270, ADDR titleInstrMsg, 27
+        invoke TextOutA, hdc, 220, 320, ADDR titleExitMsg, 22
+        jmp donePaint
+
+    drawInstructionScreen:
+        invoke SetBkMode, hdc, TRANSPARENT_BK
+        invoke SetTextColor, hdc, 0000FFFFh
+        invoke TextOutA, hdc, 260, 100, ADDR instrTitleMsg, 12
+        invoke SetTextColor, hdc, 00FFFFFFh
+        invoke TextOutA, hdc, 180, 180, ADDR hint1Msg, 25
+        invoke TextOutA, hdc, 180, 220, ADDR hint2Msg, 30
+        invoke TextOutA, hdc, 180, 260, ADDR hint3Msg, 30
+        invoke TextOutA, hdc, 220, 350, ADDR titlePlayMsg, 24
+        jmp donePaint
+
+    drawEndScreen:
+        invoke SetBkMode, hdc, TRANSPARENT_BK
+        invoke SetTextColor, hdc, 0000FFFFh   ; yellow
+        cmp gameState, 1
+        jne lostState
+        invoke TextOutA, hdc, 280, 100, ADDR winMsg, 8
+        jmp drawStats
+    lostState:
+        invoke TextOutA, hdc, 280, 100, ADDR loseMsg, 9
+    drawStats:
+        invoke SetTextColor, hdc, 00FFFFFFh   ; white
+        invoke TextOutA, hdc, 200, 180, ADDR endScoresMsg, 18
+        invoke wsprintfA, ADDR scoreBuf, ADDR fmtStr, score
+        invoke TextOutA, hdc, 380, 180, ADDR scoreBuf, eax
+        invoke TextOutA, hdc, 200, 220, ADDR endLivesMsg, 17
+        invoke wsprintfA, ADDR livesBuf, ADDR fmtStr, lives
+        invoke TextOutA, hdc, 380, 220, ADDR livesBuf, eax
+        invoke TextOutA, hdc, 200, 300, ADDR endRestartMsg, 28
+        invoke TextOutA, hdc, 200, 340, ADDR endQuitMsg, 20
+        jmp donePaint
+
+    donePaint:
         invoke EndPaint, hWin, ADDR ps       ; finish painting
         xor eax, eax                         ; return 0 (message handled)
         ret
@@ -453,7 +507,7 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         cmp ballActive, 1                    ; is ball active (game running)?
         jne skipTimeUpdate                   ; if not, dont update time
         inc timerTicks                       ; increment tick counter
-        cmp timerTicks, 60                   ; reached 60 ticks? (approx 1 sec)
+        cmp timerTicks, 125                  ; reached 125 ticks? (approx 1 sec at 8ms interval)
         jl skipTimeUpdate                    ; if not, skip
         mov timerTicks, 0                    ; reset tick counter
         inc timeSeconds                      ; increment seconds
@@ -588,6 +642,9 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         add score, 10                        ; add 10 points
         dec bricksLeft                       ; one less brick
 
+        ; beep sound (middle C, short duration)
+        invoke Beep, 261, 20
+
         ; check if red brick (row 2)
         mov eax, ecx                         ; copy index
         xor edx, edx                         ; clear
@@ -635,7 +692,27 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         add ecx, PADDLE_WIDTH                ; paddle right edge
         cmp eax, ecx                         ; right of paddle?
         jg ballFell                          ; missed paddle
+        
+        ; hit the paddle!
         neg ballDY                           ; bounce upward
+        
+        ; edge mechanic: change x direction based on where it hit
+        mov eax, ballX                       ; get ball x
+        add eax, BALL_SIZE / 2               ; ball center
+        mov ecx, paddleX                     ; paddle left
+        add ecx, PADDLE_WIDTH / 3            ; left third boundary
+        cmp eax, ecx                         ; hit left third?
+        jg checkRightEdge                    ; if not, check right
+        mov ballDX, -BALL_SPEED              ; force ball left
+        jmp donePaddleEdge
+    checkRightEdge:
+        mov ecx, paddleX                     ; paddle left
+        add ecx, (PADDLE_WIDTH * 2) / 3      ; right third boundary
+        cmp eax, ecx                         ; hit right third?
+        jl donePaddleEdge                    ; if not, it's middle (keep current dx)
+        mov ballDX, BALL_SPEED               ; force ball right
+    donePaddleEdge:
+
         mov eax, PADDLE_Y                    ; reposition ball
         sub eax, BALL_SIZE                   ; above paddle
         mov ballY, eax                       ; update position
@@ -683,8 +760,26 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
         ret
 
     .ELSEIF eax == WM_KEYDOWN
-        mov eax, wParam                      ; get which key was pressed
+        mov eax, wParam                      ; get the key code
 
+        ; --- global quit ---
+        .IF eax == VK_ESCAPE
+            invoke PostQuitMessage, 0
+            xor eax, eax
+            ret
+        .ENDIF
+
+        ; --- branch input based on game state ---
+        cmp gameState, 3                     ; title screen?
+        je titleInput
+        cmp gameState, 4                     ; instruction screen?
+        je instrInput
+        cmp gameState, 1                     ; won?
+        je endInput
+        cmp gameState, 2                     ; lost?
+        je endInput
+
+        ; --- playing input ---
         .IF eax == VK_LEFT                   ; left arrow key
             mov eax, paddleX                 ; get current paddle position
             sub eax, PADDLE_SPEED            ; move left by speed amount
@@ -700,10 +795,32 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
             sub eax, PADDLE_WIDTH            ; restore to left edge
             mov paddleX, eax                 ; update paddle position
         .ELSEIF eax == VK_SPACE              ; space bar
-            ; check if game is over and needs restart
-            cmp gameState, 0                 ; is game still playing?
-            je launchBall                    ; if yes, try to launch ball
+            cmp ballActive, 0                ; is ball on paddle?
+            jne doneKey                      ; if already moving, skip
+            mov ballActive, 1                ; launch the ball
+            mov ballDX, BALL_SPEED           ; set x velocity right
+            mov eax, BALL_SPEED              ; get speed value
+            neg eax                          ; make it negative (upward)
+            mov ballDY, eax                  ; set y velocity up
+        .ENDIF
+        jmp doneKey
 
+    titleInput:
+        .IF eax == VK_RETURN                 ; play game
+            mov gameState, 0                 ; playing state
+        .ELSEIF eax == VK_I                  ; instructions
+            mov gameState, 4                 ; instruction state
+        .ENDIF
+        jmp doneKey
+
+    instrInput:
+        .IF eax == VK_RETURN                 ; play game from instructions
+            mov gameState, 0                 ; playing state
+        .ENDIF
+        jmp doneKey
+
+    endInput:
+        .IF eax == VK_R                      ; restart
             ; --- restart the game ---
             mov gameState, 0                 ; reset game state to playing
             mov score, 0                     ; reset score to zero
@@ -731,19 +848,10 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
             mov eax, PADDLE_Y                ; above paddle
             sub eax, BALL_SIZE               ; on top
             mov ballY, eax                   ; set ball y
-            jmp doneKey                      ; done
-
-        launchBall:
-            cmp ballActive, 0                ; is ball on paddle?
-            jne doneKey                      ; if already moving, skip
-            mov ballActive, 1                ; launch the ball
-            mov ballDX, BALL_SPEED           ; set x velocity right
-            mov eax, BALL_SPEED              ; get speed value
-            neg eax                          ; make it negative (upward)
-            mov ballDY, eax                  ; set y velocity up
-        .ELSEIF eax == VK_ESCAPE             ; escape key
-            invoke PostQuitMessage, 0         ; quit the game
+        .ELSEIF eax == VK_Q                  ; quit game
+            invoke PostQuitMessage, 0
         .ENDIF
+        jmp doneKey
 
     doneKey:
         xor eax, eax                         ; return 0
