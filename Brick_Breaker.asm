@@ -808,6 +808,11 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
     titleInput:
         .IF eax == VK_RETURN                 ; play game
             mov gameState, 0                 ; playing state
+            mov ballActive, 1                ; auto-launch the ball
+            mov ballDX, BALL_SPEED           ; set x velocity right
+            mov eax, BALL_SPEED              ; get speed value
+            neg eax                          ; make it negative (upward)
+            mov ballDY, eax                  ; set y velocity up
         .ELSEIF eax == VK_I                  ; instructions
             mov gameState, 4                 ; instruction state
         .ENDIF
@@ -816,6 +821,11 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
     instrInput:
         .IF eax == VK_RETURN                 ; play game from instructions
             mov gameState, 0                 ; playing state
+            mov ballActive, 1                ; auto-launch the ball
+            mov ballDX, BALL_SPEED           ; set x velocity right
+            mov eax, BALL_SPEED              ; get speed value
+            neg eax                          ; make it negative (upward)
+            mov ballDY, eax                  ; set y velocity up
         .ENDIF
         jmp doneKey
 
@@ -839,8 +849,12 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
             cmp ecx, TOTAL_BRICKS            ; all bricks reset?
             jl resetBricks                   ; keep going if not
 
-            ; reset ball onto paddle
-            mov ballActive, 0                ; ball on paddle
+            ; auto-launch the ball
+            mov ballActive, 1                ; ball active
+            mov ballDX, BALL_SPEED           ; set x velocity right
+            mov eax, BALL_SPEED              ; get speed value
+            neg eax                          ; make it negative (upward)
+            mov ballDY, eax                  ; set y velocity up
             mov eax, paddleX                 ; center on paddle
             add eax, PADDLE_WIDTH / 2        ; middle of paddle
             sub eax, BALL_SIZE / 2           ; center ball
@@ -891,7 +905,8 @@ main PROC
     mov wc.hIconSm, eax
     invoke LoadCursorA, NULL, IDC_ARROW
     mov wc.hCursor, eax
-    mov wc.hbrBackground, NULL
+    invoke GetStockObject, 4                 ; 4 = BLACK_BRUSH
+    mov wc.hbrBackground, eax
     mov wc.lpszMenuName, NULL
     mov wc.lpszClassName, OFFSET className
 
