@@ -513,7 +513,7 @@ WndProc PROC hWin:DWORD, uMsg:DWORD, wParam:DWORD, lParam:DWORD
 
     donePaint:
         ; copy memory DC to screen DC
-        invoke BitBlt, screenDC, 0, 0, rc.right, rc.bottom, hdc, 0, 0, SRCCOPY
+        invoke BitBlt, screenDC, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, hdc, 0, 0, SRCCOPY
         
         ; cleanup double buffering
         invoke SelectObject, hdc, hOldBitmap
